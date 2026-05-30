@@ -1,0 +1,215 @@
+# 🧠 Mineração de Dados — Otimização Preditiva em 4 Bases Distintas
+
+> **Controle impositivo sobre os dados.** Um estudo aplicado de *Feature Engineering*, mitigação de *Data Leakage* e *Threshold Tuning* para maximização de acurácia.
+
+<p align="left">
+  <img src="https://img.shields.io/badge/R-276DC3?style=for-the-badge&logo=r&logoColor=white" alt="R"/>
+  <img src="https://img.shields.io/badge/Caret-FF6F00?style=for-the-badge&logo=r&logoColor=white" alt="Caret"/>
+  <img src="https://img.shields.io/badge/Tidymodels-CB3837?style=for-the-badge&logo=r&logoColor=white" alt="Tidymodels"/>
+  <img src="https://img.shields.io/badge/Random%20Forest-2E7D32?style=for-the-badge" alt="Random Forest"/>
+  <img src="https://img.shields.io/badge/XGBoost-007ACC?style=for-the-badge" alt="XGBoost"/>
+  <img src="https://img.shields.io/badge/SVM%20Radial-8E44AD?style=for-the-badge" alt="SVM"/>
+  <img src="https://img.shields.io/badge/SMOTE-themis-C62828?style=for-the-badge" alt="SMOTE"/>
+</p>
+
+<p align="left">
+  <img src="https://img.shields.io/badge/Disciplina-Temática%20em%20Mineração%20de%20Dados-blue?style=flat-square" alt="Disciplina"/>
+  <img src="https://img.shields.io/badge/Curso-Sistemas%20de%20Informação-informational?style=flat-square" alt="Curso"/>
+  <img src="https://img.shields.io/badge/Instituição-IF%20Goiano%20·%20Campus%20Urutaí-success?style=flat-square" alt="IF Goiano"/>
+</p>
+
+---
+
+## 📌 Visão Geral e Objetivo
+
+Este repositório consolida o trabalho desenvolvido na disciplina **Temática em Mineração de Dados**, parte da grade do curso de **Sistemas de Informação** do **Instituto Federal Goiano — Campus Urutaí**.
+
+A disciplina foi conduzida no formato de uma **competição algorítmica**: o objetivo central era **maximizar a Acurácia** e **otimizar as métricas preditivas** em **4 bases de dados distintas**, cada uma com características, vieses e desafios próprios. Não se tratava apenas de "rodar um modelo" — era preciso extrair o máximo de desempenho possível de cada conjunto de dados.
+
+Cada base recebeu um pipeline dedicado em **R**, com pré-processamento, validação cruzada, balanceamento e ajuste fino de hiperparâmetros e limiares de decisão.
+
+### 👥 Equipe
+
+| Integrante | |
+|---|---|
+| **Arthur Faria** | Desenvolvimento dos pipelines, engenharia de atributos e otimização de limiares |
+| **Ricardo Issa** | Modelagem, validação e análise de métricas |
+| **Sávio Issa** | Modelagem, validação e análise de métricas |
+
+---
+
+## 🎯 Nossa Filosofia Técnica (O Diferencial)
+
+Nossa estratégia para vencer a competição **não foi aceitar os resultados padrão dos algoritmos**. Partimos do princípio de que o modelo é apenas a última etapa — e a menos importante — de um pipeline bem construído. Adotamos o que chamamos de **"controle impositivo sobre os dados"**: cada decisão de pré-processamento foi deliberada, justificada e mensurada.
+
+Esse controle se manifestou em três pilares:
+
+1. **Feature Engineering com injeção de domínio** — criamos variáveis que os dados brutos não entregavam de graça (scores comportamentais, razões clínicas, indicadores de risco), traduzindo conhecimento do problema em sinal preditivo.
+2. **Combate rigoroso ao Data Leakage** — o balanceamento sintético (SMOTE) e a normalização foram isolados **dentro das dobras de treino** da Validação Cruzada (via `recipes`/`tidymodels`), garantindo que nenhuma informação do conjunto de teste vazasse para o treino e inflasse artificialmente as métricas.
+3. **Threshold Tuning por força bruta** — em vez de aceitar o limiar default de `0.50`, realizamos varreduras exaustivas no ponto de corte da probabilidade para encontrar matematicamente o limiar que maximiza a métrica-alvo de cada problema.
+
+> **Em resumo:** não deixamos o algoritmo decidir sozinho. Nós impusemos a estrutura, controlamos o vazamento e calibramos o ponto de decisão.
+
+---
+
+## 🔬 Os 4 Estudos de Caso
+
+### 💳 Estudo 1 — Risco de Crédito (*Credit Card Default*)
+
+📂 [`CartaoCredito/`](CartaoCredito/) · Script: [`cartaoCreditoARS.R`](CartaoCredito/cartaoCreditoARS.R)
+
+**O Desafio.** Identificar clientes que entrarão em **inadimplência** (*default*) no próximo mês — um problema clássico de classe desbalanceada, onde os "bons pagadores" dominam a base e mascaram os calotes.
+
+**A Abordagem.**
+- **Feature Engineering comportamental:** criamos o **"Score de Calote"** (`Total_Meses_Atraso`), que conta em quantos dos 6 meses históricos o cliente esteve inadimplente, e a **Razão Pagamento/Dívida** (`Racio_Pagamento_Divida`), comparando tudo que foi pago contra tudo que foi cobrado no período.
+- **Higienização estatística:** aplicamos filtro de **variância quase-nula** (`nearZeroVar`) e remoção de **multicolinearidade** com `findCorrelation` em `cutoff = 0.90`, eliminando redundância antes da modelagem.
+- **Seleção de variáveis (RFE):** *Recursive Feature Elimination* com validação cruzada de 10 dobras para filtrar ruído e reter apenas os preditores que realmente carregam sinal.
+- **Modelo:** **Random Forest** com balanceamento **SMOTE** aplicado via `trainControl(sampling = "smote")`.
+
+**O Racional Técnico — O Ponto Chave.**
+O coração desta solução foi o **rebaixamento do limiar de decisão de `0.50` para `0.38`**. Com o corte padrão, o modelo era conservador demais e deixava passar inadimplentes reais. Ao baixar o limiar, aumentamos a **Sensibilidade (Recall)** — capturando mais calotes verdadeiros — e ajustamos conscientemente o *trade-off* entre Sensibilidade, Especificidade e Acurácia, visualizado num gráfico de performance por limiar.
+
+```r
+# Limiar otimizado: capturar mais inadimplentes reais
+limiar_otimizado <- 0.38
+pred_classes_38 <- factor(ifelse(pred_probs$Sim > limiar_otimizado, "Sim", "Nao"),
+                          levels = c("Nao", "Sim"))
+confusionMatrix(pred_classes_38, teste$Default, positive = "Sim")
+```
+
+---
+
+### 💊 Estudo 2 — Consumo de Drogas (18 Substâncias)
+
+📂 [`ConsumoDrogas2/`](ConsumoDrogas2/) · Scripts: [`Consumo2.R`](ConsumoDrogas2/Consumo2.R) · [`SemSMOTE.R`](ConsumoDrogas2/SemSMOTE.R)
+
+**O Desafio.** Prever o consumo de **18 substâncias diferentes** a partir de traços de personalidade (Big Five), impulsividade e *sensation seeking*. Cada substância é um problema de classificação independente, com distribuições de classe radicalmente diferentes entre si.
+
+**A Abordagem.**
+- **Pipeline iterativo:** um único *loop* percorre as 18 drogas, e para cada uma promovemos uma **competição interna entre três algoritmos** — **Ranger** (Random Forest), **Glmnet** (Elastic Net) e **KNN** (`kknn`) — declarando campeão aquele com maior Acurácia (desempate por F1).
+- **Normalização obrigatória:** todos os preditores numéricos passam por `step_normalize`, condição indispensável para o bom funcionamento de Glmnet e KNN, sensíveis à escala.
+
+**O Racional Técnico — O Ponto Chave.**
+Aplicamos o **SMOTE de forma condicional**: o oversampling sintético só é acionado quando a classe minoritária representa **menos de 30%** do treino. Para *provar matematicamente* que essa decisão era necessária — e não um capricho —, mantivemos um **script espelho sem SMOTE** ([`SemSMOTE.R`](ConsumoDrogas2/SemSMOTE.R)). A comparação direta entre os dois cenários demonstra empiricamente o ganho de Sensibilidade e F1 trazido pelo balanceamento nas substâncias raras.
+
+```r
+# SMOTE acionado apenas quando a minoria é < 30%
+rec <- recipe(Classe ~ ., data = treino_raw) %>%
+  step_normalize(all_numeric_predictors())
+
+if (!is.na(prop_usuarios) && prop_usuarios < 0.30) {
+  rec <- rec %>% step_smote(Classe)   # oversampling sintético sob demanda
+}
+```
+
+---
+
+### 🧪 Estudo 3 — Base DIA (Descritores Moleculares RDKit)
+
+📂 [`Dia/`](Dia/) · Script: [`Codigo.R`](Dia/Codigo.R)
+
+**O Desafio.** Classificação binária sobre **descritores moleculares RDKit** de alta dimensionalidade, com a meta de atingir a **acurácia absoluta máxima** — o estudo mais "pesado" do conjunto.
+
+**A Abordagem.**
+- **Arquitetura de Ensemble Stacking** construída com o ecossistema **`tidymodels` + `stacks`**: três modelos-base de naturezas distintas — **XGBoost**, **Random Forest (Ranger)** e **SVM Radial (kernlab)** — todos com hiperparâmetros otimizados via `tune_grid`.
+- **Meta-modelo:** as previsões dos três são combinadas por uma **Regressão Lasso** (`blend_predictions`), que aprende os pesos ótimos de cada modelo-base, descartando os redundantes.
+
+**O Racional Técnico — O Ponto Chave.**
+Dois cuidados garantiram a integridade e o pico de desempenho:
+1. **Isolamento do SMOTE contra Data Leakage:** o `step_smote` está embutido na `recipe`, o que faz o balanceamento ser recalculado **dentro de cada dobra de treino** da validação cruzada de 10 folds — nunca tocando os dados de validação. Sem isso, a acurágia reportada seria uma ilusão otimista.
+2. **Varredura de força bruta no Threshold:** após o ensemble, testamos **todos os limiares de `0.01` a `0.99`** sobre as probabilidades brutas, localizando o ponto de corte que entrega o **cume da acurácia**.
+
+```r
+# Receita à prova de vazamento: SMOTE recalculado por fold
+dia_recipe <- recipe(Label ~ ., data = train_data) %>%
+  step_nzv(all_predictors()) %>%
+  step_corr(all_predictors(), threshold = 0.90) %>%
+  step_normalize(all_predictors()) %>%
+  step_smote(Label, over_ratio = 1)   # apenas no treino de cada dobra
+
+# Força bruta no limiar para acurácia máxima
+limiares <- seq(0.01, 0.99, by = 0.01)
+resultados_acc <- sapply(limiares, function(t) {
+  pred <- factor(ifelse(test_preds$.pred_X1 >= t, "X1", "X0"), levels = c("X1", "X0"))
+  yardstick::accuracy_vec(truth = test_preds$Label, estimate = pred)
+})
+melhor_limiar_acc <- limiares[which.max(resultados_acc)]
+```
+
+---
+
+### 🩺 Estudo 4 — Pacientes Hepáticos (ILPD)
+
+📂 [`ILPD/`](ILPD/) · Script: [`Codigo.R`](ILPD/Codigo.R)
+
+**O Desafio.** Diagnosticar doença hepática no ***Indian Liver Patient Dataset*** — uma base **assimétrica**, com **vieses biológicos** (diferenças por sexo), outliers e exames em escalas muito distintas.
+
+**A Abordagem.**
+- **Injeção de domínio clínico via Feature Engineering:** criamos a **Razão AST/ALT** (`SGOT / SGPT`, o clássico *De Ritis ratio*, marcador de padrão de lesão hepática) e a **Razão de Bilirrubinas** (`DB / TB`, bilirrubina direta sobre total) — variáveis que um hepatologista olharia primeiro.
+- **Transformação Yeo-Johnson:** aplicada com `center` e `scale` para **estabilizar a variância**, domar os outliers dos exames bioquímicos e aproximar as distribuições da normalidade (a Yeo-Johnson lida com valores zero/negativos, onde a Box-Cox falharia).
+
+**O Racional Técnico — O Ponto Chave.**
+Optamos pelo **SVM com kernel Radial**, escolha deliberada: o SVM é **diretamente beneficiado pela centralização e padronização** trazidas pela Yeo-Johnson, pois opera com distâncias no espaço de atributos. O modelo final foi **polido por um *threshold tuning* minucioso** (varredura de `0.01` a `0.99`), extraindo o máximo de acurácia possível da base desbalanceada.
+
+```r
+# Domínio clínico transformado em atributo
+df$AST_ALT_Ratio <- df$SGOT / df$SGPT   # De Ritis ratio
+df$Bili_Ratio    <- df$DB   / df$TB     # bilirrubina direta / total
+
+# Yeo-Johnson estabiliza variância e outliers — terreno ideal para o SVM Radial
+pre_proc <- preProcess(df_train, method = c("YeoJohnson", "center", "scale"))
+```
+
+---
+
+## ⚙️ Como Reproduzir os Códigos
+
+### Pré-requisitos
+
+- **R** ≥ 4.1 (recomendado **RStudio**)
+- Conexão à internet na primeira execução (os scripts **instalam automaticamente** os pacotes ausentes)
+
+### Pacotes por estudo
+
+| Estudo | Pacotes principais |
+|---|---|
+| **Cartão de Crédito** | `readxl`, `caret`, `randomForest`, `pROC`, `dplyr`, `smotefamily`, `doParallel` |
+| **Consumo de Drogas** | `dplyr`, `caret`, `themis`, `recipes`, `ranger`, `glmnet`, `kknn`, `ggplot2`, `tidyr`, `knitr` |
+| **Base DIA** | `tidymodels`, `themis`, `xgboost`, `ranger`, `kernlab`, `stacks`, `finetune`, `doParallel`, `vip`, `ggplot2` |
+| **ILPD** | `tidyverse`, `caret`, `kernlab`, `pROC` |
+
+### Execução
+
+Cada estudo é um projeto RStudio (`.Rproj`) independente e autocontido. Para rodar qualquer um deles:
+
+```r
+# 1. Abra o .Rproj da pasta desejada (ex.: CartaoCredito/CartaoCredito.Rproj)
+#    Isso garante que o diretório de trabalho aponte para os dados corretos.
+
+# 2. Execute o script na íntegra (Ctrl+Shift+Enter no RStudio)
+source("cartaoCreditoARS.R")
+```
+
+Os scripts cuidam de **instalação de dependências, carga dos dados, pré-processamento, treino, avaliação e geração de gráficos** automaticamente. As métricas finais (matrizes de confusão, acurácia, AUC e limiares ótimos) são impressas no console, e os gráficos aparecem no painel *Plots*.
+
+> ⚠️ **Nota sobre os dados.** Cada pasta espera o respectivo arquivo de dados em seu diretório de trabalho. Caso algum dataset bruto (ex.: `drug_consumption.data`) não esteja presente, baixe-o da fonte original (UCI Machine Learning Repository) e posicione-o na pasta correspondente antes de executar.
+
+---
+
+## 🏁 Conclusão
+
+Mais do que perseguir um número de acurácia, este trabalho consolidou um **método**. Em quatro problemas de domínios completamente diferentes — finanças, comportamento, química e medicina — a mesma disciplina técnica se repetiu e se mostrou decisiva:
+
+- ✅ **A Feature Engineering vence o algoritmo.** Variáveis criadas com intenção (scores comportamentais, razões clínicas) entregaram mais ganho que qualquer troca de modelo.
+- ✅ **Data Leakage é um inimigo silencioso.** Isolar SMOTE e normalização dentro das dobras de treino foi o que separou métricas *honestas* de métricas *infladas*.
+- ✅ **O limiar de `0.50` raramente é o melhor.** O *threshold tuning* — condicional ou por força bruta — extraiu desempenho que estava, literalmente, parado na mesa.
+- ✅ **Cada base pede sua própria arquitetura.** De Random Forest com SMOTE a Ensemble Stacking, de Elastic Net a SVM Radial sobre Yeo-Johnson: não há bala de prata, há adequação.
+
+O resultado é um conjunto de pipelines reprodutíveis, justificados linha a linha, que demonstram **rigor metodológico** e **maturidade técnica** na prática da Mineração de Dados.
+
+---
+
+<p align="center">
+  <em>Desenvolvido por Arthur Faria, Ricardo Issa e Sávio Issa</em><br>
+  <strong>IF Goiano — Campus Urutaí · Sistemas de Informação</strong>
+</p>
