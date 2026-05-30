@@ -1,0 +1,148 @@
+# ==============================================================================
+# 0. CARREGAMENTO DE PACOTES
+# ==============================================================================
+library(caret)
+library(caretEnsemble)
+library(randomForest)
+library(xgboost)
+library(kernlab)
+library(nnet)
+library(pROC)
+
+# ==============================================================================
+# 1. CARREGAMENTO DOS DADOS (TREINO E TESTE ISOLADOS)
+# ==============================================================================
+treino <- read.csv("DIA_trainingset_RDKit_descriptors.csv")
+teste  <- read.csv("DIA_testset_RDKit_descriptors.csv")
+
+# A) Renomear a variável alvo 'Label' para 'Class'
+names(treino)[names(treino) == "Label"] <- "Class"
+names(teste)[names(teste) == "Label"] <- "Class"
+
+# B) Remover a coluna 'SMILES'
+treino$SMILES <- NULL
+teste$SMILES  <- NULL
+
+# C) Converter a variável alvo para fator e usar Nomes Claros!
+# 0 vira "Negative", 1 vira "Positive"
+treino$Class <- factor(treino$Class, levels = c(0, 1), labels = c("Negative", "Positive"))
+teste$Class  <- factor(teste$Class, levels = c(0, 1), labels = c("Negative", "Positive"))
+
+# Definir explicitamente quem é quem
+classe_positiva <- "Positive"
+classe_negativa <- "Negative"
+
+# ==============================================================================
+# 2. PRÉ-PROCESSAMENTO 
+# ==============================================================================
+cat("\nIniciando pré-processamento...\n")
+
+# A. Remover variáveis NZV
+nzv <- nearZeroVar(treino)
+if(length(nzv) > 0) {
+  treino <- treino[, -nzv]
+  teste  <- teste[, -nzv]
+}
+
+# B. Centralizar, Escalar e Imputar
+prep_valores <- preProcess(treino, method = c("medianImpute", "center", "scale"))
+treino <- predict(prep_valores, treino)
+teste  <- predict(prep_valores, teste)
+
+# C. Filtro de Alta Correlação
+preditores_treino <- treino[, sapply(treino, is.numeric)]
+matriz_cor <- cor(preditores_treino, use = "complete.obs")
+alta_cor <- findCorrelation(matriz_cor, cutoff = 0.90)
+
+if(length(alta_cor) > 0) {
+  colunas_remover <- names(preditores_treino)[alta_cor]
+  treino <- treino[, !(names(treino) %in% colunas_remover)]
+  teste  <- teste[, !(names(teste) %in% colunas_remover)]
+}
+cat("Pré-processamento concluído.\n")
+
+# ==============================================================================
+# 3. CONFIGURAÇÃO DE TREINAMENTO (VALIDAÇÃO CRUZADA + OVERSAMPLING)
+# ==============================================================================
+set.seed(42)
+indices_cv <- createMultiFolds(treino$Class, k = 10, times = 3)
+
+controle <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  index = indices_cv,         
+  savePredictions = "final",
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary, 
+  sampling = "up" # Oversampling para dados desbalanceados
+)
+
+# ==============================================================================
+# 4. TREINAMENTO DOS MODELOS BASE
+# ==============================================================================
+algoritmos <- c("rf", "svmRadial", "nnet", "xgbTree")
+
+cat("\nTreinando modelos base. Aguarde...\n")
+set.seed(42)
+modelos_base <- caretList(
+  Class ~ ., 
+  data = treino,
+  trControl = controle,
+  methodList = algoritmos,
+  metric = "ROC",
+  tuneLength = 3 
+)
+
+cat("\nDesempenho individual (Treino):\n")
+print(summary(resamples(modelos_base)))
+
+# ==============================================================================
+# 5. CRIAÇÃO DO STACKING ENSEMBLE
+# ==============================================================================
+cat("\nTreinando o Stacking Ensemble...\n")
+set.seed(42)
+ensemble_stack <- caretStack(
+  modelos_base,
+  method = "glm",
+  metric = "ROC",
+  trControl = trainControl(
+    method = "boot",
+    number = 10,
+    savePredictions = "final",
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  )
+)
+
+print(ensemble_stack)
+
+# ==============================================================================
+# 6. PREVISÃO E AVALIAÇÃO NO TESTE
+# ==============================================================================
+cat("\nAvaliando no conjunto de Teste...\n")
+
+probabilidades_teste <- predict(ensemble_stack, newdata = teste, type = "prob")
+
+# Gerar Curva ROC
+roc_obj <- roc(teste$Class, probabilidades_teste, levels = c("Negative", "Positive"))
+melhor_corte <- coords(roc_obj, "best", best.method = "youden", ret = c("threshold", "specificity", "sensitivity"))
+
+previsoes_finais <- ifelse(probabilidades_teste > melhor_corte$threshold, classe_positiva, classe_negativa)
+previsoes_finais <- factor(previsoes_finais, levels = c("Negative", "Positive"))
+
+matriz_confusao <- confusionMatrix(previsoes_finais, teste$Class, positive = classe_positiva)
+
+# ==============================================================================
+# 7. RESULTADOS FINAIS
+# ==============================================================================
+cat("\n======================================================\n")
+cat("                RESULTADOS FINAIS                       \n")
+cat("======================================================\n")
+cat("AUC no Teste      :", round(auc(roc_obj), 4), "\n")
+cat("Acurácia Otimizada:", round(matriz_confusao$overall["Accuracy"], 4), "\n")
+cat("Sensibilidade     :", round(matriz_confusao$byClass["Sensitivity"], 4), "\n")
+cat("Especificidade    :", round(matriz_confusao$byClass["Specificity"], 4), "\n")
+cat("======================================================\n")
+
+plot(roc_obj, main="Curva ROC - Ensemble Stacking", col="blue", lwd=2)
