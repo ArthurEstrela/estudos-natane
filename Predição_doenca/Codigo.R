@@ -1,0 +1,173 @@
+# ======================================================================
+# PROJETO: PREDIÇÃO DE PEDRA NA VESÍCULA (GALLSTONE)
+# Ecossistema: tidymodels + ranger (Random Forest) + Grid Search
+# ======================================================================
+# Nomes: Arthur Faria, Ricardo Issa, Savio Issa.
+# ======================================================================
+
+# ======================================================================
+# 0. VERIFICAÇÃO E INSTALAÇÃO AUTOMÁTICA DE PACOTES
+# ======================================================================
+# Lista de pacotes necessários para o projeto
+pacotes_necessarios <- c("tidymodels", "readxl", "dplyr", "ranger", "vip", "ggplot2", "janitor")
+
+# Identifica quais pacotes da lista ainda não estão instalados na máquina
+pacotes_faltantes <- pacotes_necessarios[!(pacotes_necessarios %in% installed.packages()[,"Package"])]
+
+# Instala apenas os que faltam
+if(length(pacotes_faltantes) > 0) {
+  cat("Instalando pacotes faltantes:", paste(pacotes_faltantes, collapse = ", "), "\n")
+  install.packages(pacotes_faltantes, dependencies = TRUE)
+} else {
+  cat("Todos os pacotes necessários já estão instalados! ✅\n")
+}
+
+# Carregamento das bibliotecas
+library(tidymodels)
+library(readxl)
+library(dplyr)
+library(ranger)
+library(vip)
+library(ggplot2)
+
+options(tidymodels.dark = TRUE)
+
+# ======================================================================
+# 1. CARREGAMENTO E LIMPEZA DOS DADOS
+# ======================================================================
+# Caminho relativo: abra o projeto pelo Predição_doenca.Rproj para que
+# o diretório de trabalho aponte para esta pasta.
+df <- read_excel("gallstone-1/dataset-uci/dataset-uci.xlsx")
+df <- janitor::clean_names(df)
+df$gallstone_status <- as.factor(df$gallstone_status)
+
+# ======================================================================
+# 2. DIVISÃO DOS DADOS E RECEITA (PRÉ-PROCESSAMENTO)
+# ======================================================================
+set.seed(123)
+data_split <- initial_split(df, prop = 0.80, strata = gallstone_status)
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+
+# Receita: Seleção das 15 variáveis clínicas mais decisivas
+data_recipe <- recipe(
+  gallstone_status ~ c_reactive_protein_crp + vitamin_d +
+    aspartat_aminotransferaz_ast + high_density_lipoprotein_hdl +
+    total_body_fat_ratio_tbfr_percent + extracellular_water_ecw +
+    hemoglobin_hgb + body_protein_content_protein_percent +
+    creatinine + extracellular_fluid_total_body_water_ecf_tbw +
+    alkaline_phosphatase_alp + total_fat_content_tfc +
+    visceral_fat_area_vfa + obesity_percent +
+    visceral_muscle_area_vma_kg,
+  data = train_data
+) %>%
+  step_impute_median(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.90)
+
+# ======================================================================
+# 3. ESPECIFICAÇÃO DO MODELO RANDOM FOREST
+# ======================================================================
+rf_spec <- rand_forest(
+  mtry = tune(),
+  trees = 500,
+  min_n = tune()
+) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+rf_workflow <- workflow() %>%
+  add_recipe(data_recipe) %>%
+  add_model(rf_spec)
+
+# ======================================================================
+# 4. TREINAMENTO AVANÇADO (GRID SEARCH)
+# ======================================================================
+set.seed(123)
+cv_folds <- vfold_cv(train_data, v = 10, strata = gallstone_status)
+
+rf_grid <- grid_regular(
+  mtry(range = c(2, 8)),
+  min_n(range = c(2, 10)),
+  levels = 5
+)
+
+cat("Treinando o Random Forest Otimizado (10 folds)...\n")
+set.seed(123)
+tune_results <- tune_grid(
+  rf_workflow,
+  resamples = cv_folds,
+  grid = rf_grid,
+  control = control_grid(save_pred = TRUE),
+  metrics = metric_set(accuracy, roc_auc)
+)
+
+# ======================================================================
+# 5. FINALIZAÇÃO DO MELHOR MODELO
+# ======================================================================
+best_params <- select_best(tune_results, metric = "accuracy")
+final_wf <- finalize_workflow(rf_workflow, best_params)
+
+set.seed(123)
+final_fit <- last_fit(final_wf, split = data_split)
+
+# ======================================================================
+# 6. RESULTADOS E GRÁFICOS
+# ======================================================================
+
+test_preds <- collect_predictions(final_fit)
+
+acuracia <- yardstick::accuracy(test_preds, truth = gallstone_status, estimate = .pred_class)
+sensibi  <- yardstick::sens(test_preds, truth = gallstone_status, estimate = .pred_class, event_level = "second")
+especifi <- yardstick::spec(test_preds, truth = gallstone_status, estimate = .pred_class, event_level = "second")
+auc_roc  <- yardstick::roc_auc(test_preds, truth = gallstone_status, .pred_1, event_level = "second")
+
+# GRÁFICO 1: MÉTRICAS GERAIS
+df_metricas <- data.frame(
+  Metrica = factor(c("Acurácia\n(Geral)", "Sensibilidade\n(Acerto Doentes)",
+                     "Especificidade\n(Acerto Saudáveis)", "AUC\n(Curva ROC)"),
+                   levels = c("Acurácia\n(Geral)", "Sensibilidade\n(Acerto Doentes)",
+                              "Especificidade\n(Acerto Saudáveis)", "AUC\n(Curva ROC)")),
+  Valor = c(acuracia$.estimate, sensibi$.estimate, especifi$.estimate, auc_roc$.estimate) * 100
+)
+
+grafico_barras <- ggplot(df_metricas, aes(x = Metrica, y = Valor, fill = Metrica)) +
+  geom_col(show.legend = FALSE, width = 0.6, color = "black", alpha = 0.85) +
+  geom_text(aes(label = sprintf("%.2f%%", Valor)), vjust = -0.8, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("#4daf4a", "#e41a1c", "#377eb8", "#984ea3")) +
+  labs(
+    title = "Desempenho Geral do Modelo Random Forest",
+    subtitle = "Avaliação no Conjunto de Teste Inédito (20%)",
+    y = "Desempenho (%)",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(face = "bold", size = 11))
+
+# GRÁFICO 2: IMPORTÂNCIA DAS VARIÁVEIS
+modelo_treinado <- extract_fit_parsnip(final_fit)
+
+grafico_importancia <- vip(modelo_treinado, num_features = 15, geom = "col",
+                           mapping = aes(fill = Importance)) +
+  scale_fill_gradient(low = "#cccccc", high = "#e41a1c") +
+  labs(
+    title = "Top 15 Variáveis Mais Importantes",
+    subtitle = "Fatores clínicos mais decisivos para o diagnóstico",
+    x = "Importância",
+    y = "Variável Clínica"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+# ======================================================================
+# 7. EXIBIÇÃO DOS RESULTADOS
+# ======================================================================
+print(grafico_barras)
+print(grafico_importancia)
+
+cat("\n--- RESULTADOS FINAIS ---\n")
+cat("Acurácia:       ", round(acuracia$.estimate * 100, 2), "%\n")
+cat("Sensibilidade:  ", round(sensibi$.estimate * 100, 2), "%\n")
+cat("Especificidade: ", round(especifi$.estimate * 100, 2), "%\n")
+cat("AUC ROC:        ", round(auc_roc$.estimate * 100, 2), "%\n")

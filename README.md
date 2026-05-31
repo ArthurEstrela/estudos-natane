@@ -1,4 +1,4 @@
-# 🧠 Mineração de Dados — Otimização Preditiva em 4 Bases Distintas
+# 🧠 Mineração de Dados — Otimização Preditiva e Análise Multibase
 
 > **Controle impositivo sobre os dados.** Um estudo aplicado de *Feature Engineering*, mitigação de *Data Leakage* e *Threshold Tuning* para maximização de acurácia.
 
@@ -26,6 +26,8 @@ Este repositório consolida o trabalho desenvolvido na disciplina **Temática em
 
 A disciplina foi conduzida no formato de uma **competição algorítmica**: o objetivo central era **maximizar a Acurácia** e **otimizar as métricas preditivas** em **4 bases de dados distintas**, cada uma com características, vieses e desafios próprios. Não se tratava apenas de "rodar um modelo" — era preciso extrair o máximo de desempenho possível de cada conjunto de dados.
 
+Além das 4 bases da competição, o repositório reúne **2 estudos complementares** que ampliam o escopo do trabalho: um **5º problema de classificação clínica** (diagnóstico de pedra na vesícula) e um **estudo não-supervisionado** de segmentação (clusterização de queijos), evidenciando domínio tanto de aprendizado supervisionado quanto não-supervisionado.
+
 Cada base recebeu um pipeline dedicado em **R**, com pré-processamento, validação cruzada, balanceamento e ajuste fino de hiperparâmetros e limiares de decisão.
 
 ### 👥 Equipe
@@ -52,7 +54,9 @@ Esse controle se manifestou em três pilares:
 
 ---
 
-## 🔬 Os 4 Estudos de Caso
+## 🔬 Os Estudos de Caso
+
+> **Estudos 1 a 4** compõem a competição de acurácia. **Estudos 5 e 6** são análises complementares (classificação clínica adicional e clusterização não-supervisionada).
 
 ### 💳 Estudo 1 — Risco de Crédito (*Credit Card Default*)
 
@@ -162,6 +166,61 @@ pre_proc <- preProcess(df_train, method = c("YeoJohnson", "center", "scale"))
 
 ---
 
+### 🟡 Estudo 5 — Predição de Pedra na Vesícula (*Gallstone*)
+
+📂 [`Predição_doenca/`](Predição_doenca/) · Script: [`Codigo.R`](Predição_doenca/Codigo.R) · Relatório: [`DoencaDaVesicula.pdf`](Predição_doenca/DoencaDaVesicula.pdf)
+
+**O Desafio.** Diagnosticar a presença de **cálculos biliares** (pedra na vesícula) a partir de um conjunto rico de exames laboratoriais e medidas de **bioimpedância** corporal — uma base de alta dimensionalidade clínica, na qual nem toda variável carrega sinal.
+
+**A Abordagem.**
+- **Higienização semântica:** padronização dos nomes de colunas com `janitor::clean_names`, garantindo um pipeline `tidymodels` limpo e legível.
+- **Seleção dirigida por domínio:** em vez de jogar tudo no modelo, **selecionamos as 15 variáveis clínicas mais decisivas** (Proteína C-Reativa, Vitamina D, AST, HDL, percentual de gordura corporal, água extracelular, hemoglobina, creatinina, fosfatase alcalina, gordura visceral, entre outras) — uma curadoria que reduz ruído e melhora a generalização.
+- **Receita à prova de vazamento (`recipe`):** imputação por mediana (`step_impute_median`), normalização (`step_normalize`) e remoção de multicolinearidade (`step_corr` em `0.90`), tudo estimado apenas no treino.
+- **Modelo:** **Random Forest (Ranger)** com `mtry` e `min_n` otimizados via `grid_regular` + **Grid Search** sob validação cruzada de 10 dobras estratificadas.
+
+**O Racional Técnico — O Ponto Chave.**
+A finalização usa `last_fit` sobre o *split* original, avaliando o modelo em um **conjunto de teste inédito (20%)** — protocolo correto que impede contaminação. Extraímos não só Acurácia e AUC, mas também **Sensibilidade e Especificidade com `event_level = "second"`**, e usamos `vip` para revelar quais fatores clínicos mais pesam no diagnóstico, transformando o modelo em **insight interpretável** para a área da saúde.
+
+```r
+# Curadoria de 15 variáveis clínicas + receita à prova de vazamento
+data_recipe <- recipe(gallstone_status ~ c_reactive_protein_crp + vitamin_d +
+    aspartat_aminotransferaz_ast + high_density_lipoprotein_hdl + ... ,
+    data = train_data) %>%
+  step_impute_median(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.90)
+
+# Avaliação honesta: modelo final julgado em teste inédito
+final_fit <- last_fit(final_wf, split = data_split)
+```
+
+---
+
+### 🧀 Estudo 6 — Segmentação Sensorial de Queijos (Análise Não-Supervisionada)
+
+📂 [`Cheese/`](Cheese/) · Script: [`ScriptExtra.R`](Cheese/ScriptExtra.R) · Base: [`cheese.xls`](Cheese/cheese.xls)
+
+**O Desafio.** Diferentemente dos demais, este estudo **não possui variável-alvo**. O objetivo é puramente exploratório: descobrir **agrupamentos naturais (clusters)** em dados de avaliação **sensorial** de queijos, identificando perfis de produto que não estão rotulados nos dados.
+
+**A Abordagem.**
+- **Seleção e saneamento:** isolamento das colunas sensoriais, conversão robusta para numérico e descarte de variáveis com excesso de ausentes (> 50%), seguido de **padronização** (`scale`) — passo indispensável para algoritmos baseados em distância.
+- **Definição do número de clusters:** aplicação do **Método do Cotovelo** (*Elbow Method*, via `fviz_nbclust` com soma dos quadrados intra-cluster) para fundamentar a escolha de **k = 3**.
+- **Clusterização:** **K-Means** com `nstart = 25` (25 inicializações aleatórias para fugir de mínimos locais).
+- **Interpretação:** redução de dimensionalidade por **PCA** (`prcomp`) para visualizar a separação dos grupos, análise de **contribuição das variáveis** e **heatmap de perfil** dos clusters.
+
+**O Racional Técnico — O Ponto Chave.**
+O valor deste estudo está em demonstrar **domínio do aprendizado não-supervisionado**: não basta rodar o K-Means, é preciso **justificar o número de clusters** (cotovelo), **garantir comparabilidade entre variáveis** (padronização obrigatória) e, sobretudo, **traduzir os clusters em conhecimento** — o cruzamento entre PCA e o heatmap de médias revela *quais atributos sensoriais definem cada perfil de queijo*.
+
+```r
+# Padronização → cotovelo → K-Means → interpretação por PCA
+dados_scaled <- scale(dados_num)
+fviz_nbclust(dados_scaled, kmeans, method = "wss")          # define k
+kmeans_result <- kmeans(dados_scaled, centers = 3, nstart = 25)
+fviz_cluster(kmeans_result, data = dados_scaled, ellipse.type = "convex")
+```
+
+---
+
 ## ⚙️ Como Reproduzir os Códigos
 
 ### Pré-requisitos
@@ -177,6 +236,8 @@ pre_proc <- preProcess(df_train, method = c("YeoJohnson", "center", "scale"))
 | **Consumo de Drogas** | `dplyr`, `caret`, `themis`, `recipes`, `ranger`, `glmnet`, `kknn`, `ggplot2`, `tidyr`, `knitr` |
 | **Base DIA** | `tidymodels`, `themis`, `xgboost`, `ranger`, `kernlab`, `stacks`, `finetune`, `doParallel`, `vip`, `ggplot2` |
 | **ILPD** | `tidyverse`, `caret`, `kernlab`, `pROC` |
+| **Pedra na Vesícula** | `tidymodels`, `readxl`, `dplyr`, `ranger`, `vip`, `ggplot2`, `janitor` |
+| **Queijos (Cheese)** | `readxl`, `ggplot2`, `factoextra`, `dplyr`, `reshape2` |
 
 ### Execução
 
@@ -198,12 +259,13 @@ Os scripts cuidam de **instalação de dependências, carga dos dados, pré-proc
 
 ## 🏁 Conclusão
 
-Mais do que perseguir um número de acurácia, este trabalho consolidou um **método**. Em quatro problemas de domínios completamente diferentes — finanças, comportamento, química e medicina — a mesma disciplina técnica se repetiu e se mostrou decisiva:
+Mais do que perseguir um número de acurácia, este trabalho consolidou um **método**. Em domínios completamente diferentes — finanças, comportamento, química, medicina e até análise sensorial de alimentos — a mesma disciplina técnica se repetiu e se mostrou decisiva:
 
 - ✅ **A Feature Engineering vence o algoritmo.** Variáveis criadas com intenção (scores comportamentais, razões clínicas) entregaram mais ganho que qualquer troca de modelo.
 - ✅ **Data Leakage é um inimigo silencioso.** Isolar SMOTE e normalização dentro das dobras de treino foi o que separou métricas *honestas* de métricas *infladas*.
 - ✅ **O limiar de `0.50` raramente é o melhor.** O *threshold tuning* — condicional ou por força bruta — extraiu desempenho que estava, literalmente, parado na mesa.
 - ✅ **Cada base pede sua própria arquitetura.** De Random Forest com SMOTE a Ensemble Stacking, de Elastic Net a SVM Radial sobre Yeo-Johnson: não há bala de prata, há adequação.
+- ✅ **Supervisionado e não-supervisionado.** Da classificação de risco e diagnóstico à segmentação por K-Means com PCA, o repositório cobre os dois grandes paradigmas da Mineração de Dados com o mesmo rigor de pré-processamento e interpretação.
 
 O resultado é um conjunto de pipelines reprodutíveis, justificados linha a linha, que demonstram **rigor metodológico** e **maturidade técnica** na prática da Mineração de Dados.
 
